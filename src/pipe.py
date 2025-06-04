@@ -1,11 +1,13 @@
 import pygame
 import random
 
-# We'll assign PIPE_IMG (and flipped versions) after display initialization in main.py
+# We'll inject PIPE_IMG and flipped variants from main/train later
 PIPE_IMG = None
 
+# Start with a base speed of 5; we’ll scale this dynamically
+PIPE_SPEED = 5
+
 GAP = 200
-VEL = 5
 
 class Pipe:
     def __init__(self, x):
@@ -13,12 +15,9 @@ class Pipe:
         self.height = 0
         self.top = 0
         self.bottom = 0
-
-        # We do NOT set these to None here; they will resolve to the class attributes
-        # that we inject in main.py (pipe.Pipe.PIPE_TOP / PIPE_BOTTOM).
-        # self.PIPE_TOP = None    ← Remove these lines
-        # self.PIPE_BOTTOM = None  ← Remove these lines
-
+        # These get assigned in main.py / train.py:
+        #   Pipe.PIPE_TOP = ...
+        #   Pipe.PIPE_BOTTOM = ...
         self.passed = False
         self.set_height()
 
@@ -28,7 +27,8 @@ class Pipe:
         self.bottom = self.height + GAP
 
     def move(self):
-        self.x -= VEL
+        # Use the global PIPE_SPEED instead of a fixed VEL
+        self.x -= PIPE_SPEED
 
     def draw(self, win):
         win.blit(self.PIPE_TOP, (self.x, self.top))

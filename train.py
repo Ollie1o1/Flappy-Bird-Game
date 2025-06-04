@@ -3,31 +3,30 @@ import neat
 import os
 import random
 
-# Import from the src/ subpackage
 from src.bird import Bird
-from src.pipe import Pipe
+from src.pipe import Pipe, PIPE_SPEED  # PIPE_SPEED is a module‐level variable
 
-# Window dimensions (must match src/main.py)
+# Window dimensions
 WIN_WIDTH, WIN_HEIGHT = 600, 800
 
-# ---- INITIALIZE PYGAME & WINDOW FOR TRAINING ----
+# Initialize pygame & window
 pygame.init()
 WIN = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
-pygame.display.set_caption("Flappy NEAT Training")
+pygame.display.set_caption("Flappy NEAT (Speed-Up Every 5 Points)")
 
-# 1) BACKGROUND (600×800)
+# 1) Background
 orig_bg = pygame.image.load("assets/bg.png")
 BG_IMG = pygame.transform.scale(orig_bg, (WIN_WIDTH, WIN_HEIGHT))
 
-# 2) BIRD (50×35)
+# 2) Bird (50×35)
 orig_bird = pygame.image.load("assets/bird.png").convert_alpha()
-scaled_bird = pygame.transform.scale(orig_bird, (115, 90))
+scaled_bird = pygame.transform.scale(orig_bird, (110, 95))
 import src.bird as bird_module
 bird_module.BIRD_IMG = scaled_bird
 
-# 3) PIPE (80×500)
+# 3) Pipe (80×500)
 orig_pipe = pygame.image.load("assets/pipe.png").convert_alpha()
-scaled_pipe = pygame.transform.scale(orig_pipe, (230, 500))
+scaled_pipe = pygame.transform.scale(orig_pipe, (250, 500))
 import src.pipe as pipe_module
 pipe_module.PIPE_IMG = scaled_pipe
 pipe_module.Pipe.PIPE_TOP = pygame.transform.flip(scaled_pipe, False, True)
@@ -35,42 +34,28 @@ pipe_module.Pipe.PIPE_BOTTOM = scaled_pipe
 
 STAT_FONT = pygame.font.SysFont("comicsans", 30)
 
-
 def draw_window(birds, pipes, score, generation):
-    """
-    Draws the current state of all active birds and pipes,
-    plus the score and generation indicators.
-    """
     WIN.blit(BG_IMG, (0, 0))
-
     for p in pipes:
         p.draw(WIN)
-
     for b in birds:
         b.draw(WIN)
-
     # Score (top-right)
     score_text = STAT_FONT.render(f"Score: {score}", True, (255, 255, 255))
     WIN.blit(score_text, (WIN_WIDTH - score_text.get_width() - 10, 10))
-
-    # Generation (top-left)
+    # Generation number (top-left)
     gen_text = STAT_FONT.render(f"Gen: {generation}", True, (255, 255, 255))
     WIN.blit(gen_text, (10, 10))
-
     pygame.display.update()
 
-
 def eval_genomes(genomes, config):
-    """
-    Called by NEAT for each generation. 
-    Each genome corresponds to one Bird. We run them all in parallel,
-    collect fitness, and only stop when all birds have died.
-    """
+    # Reset pipe speed at start of each generation
+    pipe_module.PIPE_SPEED = 5
+
     nets = []
     ge = []
     birds = []
 
-    # Create neural nets, Bird instances, and set initial fitness = 0
     for genome_id, genome in genomes:
         genome.fitness = 0.0
         net = neat.nn.FeedForwardNetwork.create(genome, config)
@@ -86,24 +71,21 @@ def eval_genomes(genomes, config):
     # Run until all birds die
     while len(birds) > 0:
         clock.tick(30)
-
-        # Handle Pygame window events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 quit()
 
-        # Decide which pipe is next (for input)
+        # Choose which pipe to feed into the network
         pipe_ind = 0
         if len(pipes) > 1 and birds[0].x > pipes[0].x + pipes[0].PIPE_TOP.get_width():
             pipe_ind = 1
 
-        # 1) Move each bird and give it a small fitness reward
+        # Move each bird & decide “flap” based on its network output
         for idx, bird_obj in enumerate(birds):
             bird_obj.move()
-            ge[idx].fitness += 0.1  # stay‐alive bonus
+            ge[idx].fitness += 0.1  # small stay‐alive bonus
 
-            # Prepare inputs for the neural network
             top_dist = abs(bird_obj.y - pipes[pipe_ind].height)
             bottom_dist = abs(bird_obj.y - pipes[pipe_ind].bottom)
             horiz_dist = abs(pipes[pipe_ind].x - bird_obj.x)
@@ -112,60 +94,55 @@ def eval_genomes(genomes, config):
             if output[0] > 0.5:
                 bird_obj.flap()
 
-        # 2) Move pipes and check for passed pipes
+        # Move pipes & check for new ones
         add_pipe = False
-        remove_pipes = []
+        removed = []
         for p in pipes:
             p.move()
             if not p.passed and birds and p.x < birds[0].x:
                 p.passed = True
                 add_pipe = True
-            # If pipe goes off‐screen
             if p.x + p.PIPE_TOP.get_width() < 0:
-                remove_pipes.append(p)
+                removed.append(p)
 
         if add_pipe:
             score += 1
+            # Every time score % 5 == 0, speed up pipes by 1.2×
+            if score % 5 == 0:
+                pipe_module.PIPE_SPEED *= 1.2
+
             for genome in ge:
                 genome.fitness += 5.0  # reward for passing a pipe
             pipes.append(Pipe(WIN_WIDTH + 50))
 
-        for p in remove_pipes:
-            pipes.remove(p)
+        for r in removed:
+            pipes.remove(r)
 
-        # 3) Collision checks: collect bird indices that collide with any pipe
+        # Collision & off-screen checks
         birds_to_remove = set()
-        for idx, bird_obj in enumerate(birds):
-            for p in pipes:
-                if p.collide(bird_obj):
-                    ge[idx].fitness -= 1.0
-                    birds_to_remove.add(idx)
-                    break  # no need to check other pipes for this bird
-
-        # 4) Off‐screen (top/bottom) checks: also mark for removal
         for idx, bird_obj in enumerate(birds):
             if bird_obj.y + bird_obj.img.get_height() >= WIN_HEIGHT or bird_obj.y < 0:
                 ge[idx].fitness -= 1.0
                 birds_to_remove.add(idx)
+                continue
+            for p in pipes:
+                if p.collide(bird_obj):
+                    ge[idx].fitness -= 1.0
+                    birds_to_remove.add(idx)
+                    break
 
-        # 5) Remove all dead birds (in descending index order)
+        # Remove all dead birds in descending index order
         if birds_to_remove:
             for idx in sorted(birds_to_remove, reverse=True):
                 birds.pop(idx)
                 nets.pop(idx)
                 ge.pop(idx)
 
-        # 6) Draw the current frame
         draw_window(birds, pipes, score, generation)
 
-    # After all birds die, increment generation counter
     eval_genomes.generation += 1
 
-
 def run_neat(config_path):
-    """
-    Sets up NEAT using the given config file, and runs for up to 50 generations.
-    """
     config = neat.config.Config(
         neat.DefaultGenome,
         neat.DefaultReproduction,
@@ -173,26 +150,24 @@ def run_neat(config_path):
         neat.DefaultStagnation,
         config_path,
     )
-
     pop = neat.Population(config)
     pop.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
 
     eval_genomes.generation = 1
-
-    # Run NEAT, calling eval_genomes each generation, for up to 50 generations
     winner = pop.run(eval_genomes, 50)
 
-    # Save the best genome to disk
+    # Save the best genome
     with open("best_flappy_genome.pkl", "wb") as f:
         import pickle
         pickle.dump(winner, f)
 
     print("\nBest genome saved as best_flappy_genome.pkl")
 
-
 if __name__ == "__main__":
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, "config-feedforward.txt")
     run_neat(config_path)
+# This script sets up a NEAT-based Flappy Bird game where the pipe speed increases every 5 points.
+# It initializes the game window, loads assets, and defines the main game loop for evaluating genomes.
