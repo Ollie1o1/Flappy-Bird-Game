@@ -4,8 +4,8 @@ import random
 # We'll inject PIPE_IMG and flipped variants from main/train later
 PIPE_IMG = None
 
-# Start with a base speed of 5; we’ll scale this dynamically
-PIPE_SPEED = 5
+# Start with a base speed of 8; we’ll scale this dynamically
+PIPE_SPEED = 8
 
 GAP = 200
 
